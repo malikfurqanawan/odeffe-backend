@@ -28,8 +28,14 @@ module.exports = {
         email = email.toLowerCase();
         userName = userName.toLowerCase();
         let token = "", user = {};
-        let existingAccount = await UsersModel.findOne({email: email}).count();
-        if ( existingAccount > 0) {
+        let existingAccount = await UsersModel.findOne({email: email});
+        if ( existingAccount.isDeleted === 'Yes' || existingAccount.block === 'Yes') {
+            return res.status(409).json({
+                status: "Error",
+                errorEmail: "This user has been blocked by odeffe. Contact support@odeffe.com for any query."
+            });
+        }
+        if (existingAccount) {
             return res.status(409).json({
                 status: "Error",
                 errorEmail: "Email already taken."
@@ -47,7 +53,7 @@ module.exports = {
         user = await UsersModel.create({
             name: name,
             email: email,
-            userName: userName,
+            userName: userName.toLowerCase(),
             password: password,
             verificationCode: verificationCode.toString()
         });
@@ -149,14 +155,14 @@ module.exports = {
             });
         }
         else {
-            if (user.block === 'Yes') {
+            if (user.block === 'Yes' || user.isDeleted === 'Yes') {
                 return res.status(404).json({
                     status: "Failed",
                     message: "You are not authorized to login"
                 });
             }
             let isMatch = await user.comparePassword(password);
-            if ( !isMatch ) {
+            if ( !isMatch) {
                 return res.status(409).json({
                     status: "Error",
                     errPassword: "Invalid Email/Password"
@@ -218,7 +224,10 @@ module.exports = {
   Remove: async (req, res) => {
     try {
         let id = req.params.id;
-        let removeuser = await UsersModel.remove({_id: id});
+        let removeuser = await UsersModel.updateOne({_id: id}, {
+            isDeleted: 'Yes',
+            block: 'Yes'
+        });
         if ( removeuser.ok === 1 ) {
             return res.status(200).json({
                 status: "Deleted",
@@ -240,7 +249,11 @@ module.exports = {
   },
   List: async ( req, res ) => {
     try {
-        const users = await UsersModel.find({}, {password: 0}).sort({_id: -1});
+        const users = await UsersModel.find({
+            isDeleted: {
+                $ne: 'Yes'
+            }
+        }, {password: 0}).sort({_id: -1});
         if ( users.length === 0 ) {
             return res.status(403).json({
                 status: "Failed",
@@ -337,6 +350,12 @@ module.exports = {
                 changePasswordCode: verificationCode.toString()
             });
             const user = await UsersModel.findOne({email: email}, {password: 0});
+            if (user.isDeleted === 'Yes' || user.block === 'Yes') {
+                return res.status(404).json({
+                    status: "Failed",
+                    message: "This user has been blocked. Contact support for any queries."
+                });
+            }
             let message = '';
             message= '<img src="https://s12.directupload.net/images/200827/6xtdhlvh.png" style="height:60px;"/><br>' +
                     '<h2 style="font-weight: 700; text-decoration: underline; text-align:center">Forgot Password Change PIN</h2><br>';
@@ -604,23 +623,25 @@ module.exports = {
             }
         }).distinct('user');
         const PayoutUsers = [];
-        let weekPayoutUsers = 0;
         for (const payout of unpaidPayouts) {
-            if (weekPayoutUsers === 0) {
-                weekPayoutUsers += 1
+            const check = PayoutUsers
+            if (PayoutUsers.length === 0) {
                 PayoutUsers.push(payout.user._id)
-            } else if (PayoutUsers.indexOf(payout.user._id) !== -1) {
-                weekPayoutUsers += 1
-                PayoutUsers.push(payout.user._id)
+            } else {
+                const check = PayoutUsers.indexOf(payout.user._id);
+                if (check === -1) {
+                    PayoutUsers.push(payout.user._id);
+                }
             }
         }
         for (const affiliation of unpaidAffiliations) {
-            if (weekPayoutUsers === 0) {
-                weekPayoutUsers += 1
+            if (PayoutUsers.length === 0) {
                 PayoutUsers.push(affiliation.referralId._id)
-            } else if (PayoutUsers.indexOf(affiliation.referralId._id) !== -1) {
-                weekPayoutUsers += 1
-                PayoutUsers.push(affiliation.referralId._id)
+            } else {
+                const check = PayoutUsers.indexOf(affiliation.referralId._id);
+                if (check === -1) {
+                    PayoutUsers.push(affiliation.referralId._id);
+                }
             }
         }
         return res.status(200).json({
@@ -636,7 +657,7 @@ module.exports = {
                 weekPrograms: weekPrograms.length,
                 programUsers: programUsers.length,
                 totalPendingPayouts: totalPendingPayouts,
-                weekPayoutUsers: weekPayoutUsers,
+                weekPayoutUsers: PayoutUsers.length,
                 weekInvestment: weekInvestment
             }
         });
